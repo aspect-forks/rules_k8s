@@ -65,6 +65,9 @@ _kubectl_configure = repository_rule(
                   " label. Can't be used together with attribute 'build_srcs'.",
         ),
     },
+    environ = [
+        "PATH"
+    ]
 )
 
 def _ensure_all_provided(func_name, attrs, kwargs):

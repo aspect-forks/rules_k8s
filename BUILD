@@ -23,13 +23,18 @@ exports_files([
     "__init__.py",
 ])
 
+# gazelle:prefix github.com/bazelbuild/rules_k8s
+# gazelle:repository go_repository name=com_github_docker_docker_credential_helpers importpath=github.com/docker/docker-credential-helpers/credentials
 gazelle(
     name = "gazelle",
-    prefix = "github.com/bazelbuild/rules_k8s",
 )
 
-# Make Gazelle ignore Go files in the examples directory used in e2e tests.
-# gazelle:exclude examples
-
-# rules_docker's BUILD files follow the go_default_library naming convention
-# gazelle:go_naming_convention_external go_default_library
+gazelle(
+    name = "gazelle-update-repos",
+    args = [
+        "-from_file=go.mod",
+        "-to_macro=k8s/k8s_go_deps.bzl%k8s_go_deps",
+        "-prune",
+    ],
+    command = "update-repos",
+)

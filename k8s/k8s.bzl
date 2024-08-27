@@ -56,6 +56,35 @@ def k8s_repositories():
         urls = ["https://github.com/yaml/pyyaml/archive/5.4.1.zip"],
     )
 
+    maybe(
+        http_archive,
+        name = "io_bazel_rules_go",
+        integrity = "sha256-M6zErg9wUC20uJPJ/B3Xqb+ZjCPn/yxFF3QdQEmpdvg=",
+        urls = [
+            "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.48.0/rules_go-v0.48.0.zip",
+            "https://github.com/bazelbuild/rules_go/releases/download/v0.48.0/rules_go-v0.48.0.zip",
+        ],
+    )
+
+    maybe(
+        http_archive,
+        name = "bazel_gazelle",
+        integrity = "sha256-12v3pg/YsFBEQJDfooN6Tq+YKeEWVhjuNdzspcvfWNU=",
+        urls = [
+            "https://mirror.bazel.build/github.com/bazelbuild/bazel-gazelle/releases/download/v0.37.0/bazel-gazelle-v0.37.0.tar.gz",
+            "https://github.com/bazelbuild/bazel-gazelle/releases/download/v0.37.0/bazel-gazelle-v0.37.0.tar.gz",
+        ],
+    )
+
+
+    # WORKSPACE target to configure the kubectl tool
+    maybe(
+        kubectl_configure,
+        name = "k8s_config",
+        build_srcs = False,
+    )
+
+
     # Register the default kubectl toolchain targets for supported platforms
     # note these work with the autoconfigured toolchain
     native.register_toolchains(
@@ -65,48 +94,4 @@ def k8s_repositories():
         "@io_bazel_rules_k8s//toolchains/kubectl:kubectl_macos_x86_64_toolchain",
         "@io_bazel_rules_k8s//toolchains/kubectl:kubectl_macos_arm64_toolchain",
         "@io_bazel_rules_k8s//toolchains/kubectl:kubectl_windows_toolchain",
-    )
-
-    maybe(
-        http_archive,
-        name = "io_bazel_rules_go",
-        sha256 = "685052b498b6ddfe562ca7a97736741d87916fe536623afb7da2824c0211c369",
-        urls = [
-            "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.33.0/rules_go-v0.33.0.zip",
-            "https://github.com/bazelbuild/rules_go/releases/download/v0.33.0/rules_go-v0.33.0.zip",
-        ],
-    )
-
-    maybe(
-        http_archive,
-        name = "bazel_gazelle",
-        sha256 = "de69a09dc70417580aabf20a28619bb3ef60d038470c7cf8442fafcf627c21cb",
-        urls = [
-            "https://mirror.bazel.build/github.com/bazelbuild/bazel-gazelle/releases/download/v0.24.0/bazel-gazelle-v0.24.0.tar.gz",
-            "https://github.com/bazelbuild/bazel-gazelle/releases/download/v0.24.0/bazel-gazelle-v0.24.0.tar.gz",
-        ],
-    )
-
-    maybe(
-        http_archive,
-        name = "io_bazel_rules_docker",
-        sha256 = "b1e80761a8a8243d03ebca8845e9cc1ba6c82ce7c5179ce2b295cd36f7e394bf",
-        urls = ["https://github.com/bazelbuild/rules_docker/releases/download/v0.25.0/rules_docker-v0.25.0.tar.gz"],
-    )
-
-    maybe(
-        http_archive,
-        name = "bazel_skylib",
-        sha256 = "74d544d96f4a5bb630d465ca8bbcfe231e3594e5aae57e1edbf17a6eb3ca2506",
-        urls = [
-            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.3.0/bazel-skylib-1.3.0.tar.gz",
-            "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.3.0/bazel-skylib-1.3.0.tar.gz",
-        ],
-    )
-
-    # WORKSPACE target to configure the kubectl tool
-    maybe(
-        kubectl_configure,
-        name = "k8s_config",
-        build_srcs = False,
     )

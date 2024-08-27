@@ -13,28 +13,24 @@
 # limitations under the License.
 """An implementation of k8s_object for interacting with an object of kind."""
 
-load(
-    "@io_bazel_rules_docker//container:layer_tools.bzl",
-    _get_layers = "get_from_target",
-    _layer_tools = "tools",
-)
-load(
-    "@io_bazel_rules_docker//skylib:label.bzl",
-    _string_to_label = "string_to_label",
-)
-load(
-    "@io_bazel_rules_docker//skylib:path.bzl",
-    _get_runfile_path = "runfile",
-)
+def _string_to_label(label_list, string_list):
+    label_string_dict = dict()
+    for i in range(len(label_list)):
+        string = string_list[i]
+        label = label_list[i]
+        label_string_dict[string] = label
+    return label_string_dict
+
+def _get_runfile_path(ctx, f):
+    if ctx.workspace_name:
+        return ctx.workspace_name + "/" + f.short_path
+    else:
+        return f.short_path
 
 def _runfiles(ctx, f):
     return "${RUNFILES}/%s" % _get_runfile_path(ctx, f)
 
 def _deduplicate(iterable):
-    """Performs a deduplication (similar to `list(set(...))`)
-
-    This is necessary because `set` is not available in Skylark.
-    """
     return {k: None for k in iterable}.keys()
 
 def _add_dicts(*dicts):
@@ -65,31 +61,16 @@ def _impl(ctx):
         for tag in ctx.attr.images:
             resolved_tag = ctx.expand_make_variables("tag", tag, {})
             target = ctx.attr.images[tag]
-            image = _get_layers(ctx, ctx.label.name, image_target_dict[target])
+            default_info = image_target_dict[target][DefaultInfo]
+            image_files = default_info.files.to_list()
+            all_inputs.extend(image_files)
+            all_inputs.extend(default_info.default_runfiles.files.to_list())
 
-            image_spec = {"name": resolved_tag}
-            if image.get("legacy"):
-                image_spec["tarball"] = _runfiles(ctx, image["legacy"])
-                all_inputs.append(image["legacy"])
-
-            blobsums = image.get("blobsum", [])
-            image_spec["digest"] = ",".join([_runfiles(ctx, f) for f in blobsums])
-            all_inputs.extend(blobsums)
-
-            diff_ids = image.get("diff_id", [])
-            image_spec["diff_id"] = ",".join([_runfiles(ctx, f) for f in diff_ids])
-            all_inputs.extend(diff_ids)
-
-            blobs = image.get("zipped_layer", [])
-            image_spec["compressed_layer"] = ",".join([_runfiles(ctx, f) for f in blobs])
-            all_inputs.extend(blobs)
-
-            uncompressed_blobs = image.get("unzipped_layer", [])
-            image_spec["uncompressed_layer"] = ",".join([_runfiles(ctx, f) for f in uncompressed_blobs])
-            all_inputs.extend(uncompressed_blobs)
-
-            image_spec["config"] = _runfiles(ctx, image["config"])
-            all_inputs.append(image["config"])
+            image_spec = {
+                "name": resolved_tag,
+                "layout": _runfiles(ctx, image_files[0])
+            }
+    
 
             # Quote the semi-colons so they don't complete the command.
             image_specs.append("';'".join([
@@ -124,7 +105,7 @@ def _impl(ctx):
             },
         ).to_json(),
     )
-    all_inputs += [substitutions_file]
+    all_inputs.append(substitutions_file)
 
     ctx.actions.expand_template(
         template = ctx.file._template,
@@ -321,7 +302,6 @@ _k8s_object = rule(
             ),
         },
         _common_attrs,
-        _layer_tools,
     ),
     executable = True,
     implementation = _impl,

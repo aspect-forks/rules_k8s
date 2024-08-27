@@ -11,10 +11,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/bazelbuild/rules_docker/container/go/pkg/compat"
-	"github.com/bazelbuild/rules_docker/container/go/pkg/utils"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"gopkg.in/yaml.v2"
 )
@@ -26,8 +25,8 @@ type Flags struct {
 	SubstitutionsFile string
 	AllowUnusedImages bool
 	NoPush            bool
-	StampInfoFile     utils.ArrayStringFlags
-	ImgSpecs          utils.ArrayStringFlags
+	StampInfoFile     ArrayStringFlags
+	ImgSpecs          ArrayStringFlags
 }
 
 // Commandline flags
@@ -97,7 +96,7 @@ func NewResolver(flags *Flags, option ...Option) *Resolver {
 
 // Resolve will parse the files pointed by the flags and return a resolvedTemplate and error as applicable
 func (r *Resolver) Resolve() (resolvedTemplate string, err error) {
-	stamper, err := compat.NewStamper(r.flags.StampInfoFile)
+	stamper, err := NewStamper(r.flags.StampInfoFile)
 	if err != nil {
 		return "", fmt.Errorf("Failed to initialize the stamper: %w", err)
 	}
@@ -143,51 +142,14 @@ type imageSpec struct {
 	// name is the name of the image.
 	name string
 	// imgTarball is the image in the `docker save` tarball format.
-	imgTarball string
-	// imgConfig if the config JSON file of the image.
-	imgConfig string
-	// digests is a list of files with the sha256 digests of the compressed
-	// layers.
-	digests []string
-	// diffIDs is a list of files with the sha256 digests of the uncompressed
-	// layers.
-	diffIDs []string
-	// compressedLayers are the paths to the compressed layer tarballs.
-	compressedLayers []string
-	// uncompressedLayers are the paths to the uncompressed layer tarballs.
-	uncomressedLayers []string
-}
-
-// layers returns a list of strings that can be passed to the image reader in
-// the compatiblity package of rules_docker to read the layers of an image in
-// the format "va11,val2,val3,val4" where:
-// val1 is the compressed layer tarball.
-// val2 is the uncompressed layer tarball.
-// val3 is the digest file.
-// val4 is the diffID file.
-func (s *imageSpec) layers() ([]string, error) {
-	result := []string{}
-	if len(s.digests) != len(s.diffIDs) || len(s.diffIDs) != len(s.compressedLayers) || len(s.compressedLayers) != len(s.uncomressedLayers) {
-		return nil, fmt.Errorf("digest, diffID, compressed blobs & uncompressed blobs had unequal lengths for image %s, got %d, %d, %d, %d, want all of the lengths to be equal", s.name, len(s.digests), len(s.diffIDs), len(s.compressedLayers), len(s.uncomressedLayers))
-	}
-	for i, digest := range s.digests {
-		diffID := s.diffIDs[i]
-		compressedLayer := s.compressedLayers[i]
-		uncompressedLayer := s.uncomressedLayers[i]
-		result = append(result, fmt.Sprintf("%s,%s,%s,%s", compressedLayer, uncompressedLayer, digest, diffID))
-	}
-	return result, nil
+	layout string
 }
 
 // parseImageSpec parses the differents parts of a single docker image specified
 // as string in the format "key1=val1;key2=val2" where the expected keys are:
 // 1. "name": Name of the image.
-// 2. "tarball": docker save tarball of the image.
-// 3. "config": JSON config file of the image.
-// 4. "diff_id": Files with sha256 digest of uncompressed layers.
-// 5. "digest": Files with sha256 digest of compressed layers.
-// 6. "compressed_layer": Path to compressed layer tarballs.
-// 7. "uncompressed_layer": Path to uncompressed layer tarballs.
+// 2. "layout": OCI Layout
+
 func parseImageSpec(spec string) (imageSpec, error) {
 	result := imageSpec{}
 	splitSpec := strings.Split(spec, ";")
@@ -199,18 +161,8 @@ func parseImageSpec(spec string) (imageSpec, error) {
 		switch splitFields[0] {
 		case "name":
 			result.name = splitFields[1]
-		case "tarball":
-			result.imgTarball = splitFields[1]
-		case "config":
-			result.imgConfig = splitFields[1]
-		case "diff_id":
-			result.diffIDs = strings.Split(splitFields[1], ",")
-		case "digest":
-			result.digests = strings.Split(splitFields[1], ",")
-		case "compressed_layer":
-			result.compressedLayers = strings.Split(splitFields[1], ",")
-		case "uncompressed_layer":
-			result.uncomressedLayers = strings.Split(splitFields[1], ",")
+		case "layout":
+			result.layout = splitFields[1]
 		default:
 			return imageSpec{}, fmt.Errorf("unknown image spec field %q", splitFields[0])
 		}
@@ -221,7 +173,7 @@ func parseImageSpec(spec string) (imageSpec, error) {
 // parseSubsitutions parses a substitution file, which should be a JSON object
 // with strings to search for and values to replace them with. The replacement values
 // are stamped using the provided stamper.
-func parseSubstitutions(file string, stamper *compat.Stamper) (map[string]string, error) {
+func parseSubstitutions(file string, stamper *Stamper) (map[string]string, error) {
 	b, err := ioutil.ReadFile(file)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read file: %v", err)
@@ -245,20 +197,30 @@ func parseSubstitutions(file string, stamper *compat.Stamper) (map[string]string
 // registry indicated in the image name. The image name is stamped with the
 // given stamper.
 // The stamped image name is returned referenced by its sha256 digest.
-func (r *Resolver) publishSingle(spec imageSpec, stamper *compat.Stamper) (string, error) {
-	layers, err := spec.layers()
+func (r *Resolver) publishSingle(spec imageSpec, stamper *Stamper) (string, error) {
+	l, err := layout.ImageIndexFromPath(spec.layout)
 	if err != nil {
-		return "", fmt.Errorf("unable to convert the layer parts in image spec for %s into a single comma separated argument: %v", spec.name, err)
+		return "", fmt.Errorf("loading %s as OCI layout: %v", spec.layout, err)
+	}
+	m, err := l.IndexManifest()
+	if err != nil {
+		return "", fmt.Errorf("could not read OCI index manifest %s: %v", spec.layout, err)
 	}
 
-	imgParts, err := compat.ImagePartsFromArgs(spec.imgConfig, "", spec.imgTarball, layers)
-	if err != nil {
-		return "", fmt.Errorf("unable to determine parts of the image from the specified arguments: %v", err)
+	if len(m.Manifests) != 1 {
+		return "", fmt.Errorf("OCI layout contains %d entries. expected only one", len(m.Manifests))
 	}
-	cr := compat.Reader{Parts: imgParts}
-	img, err := cr.ReadImage()
+
+	desc := m.Manifests[0]
+
+	if desc.MediaType.IsIndex() {
+		return "", fmt.Errorf("multi-arch images are not supported yet")
+	}
+
+	img, err := l.Image(desc.Digest)
+
 	if err != nil {
-		return "", fmt.Errorf("error reading image: %v", err)
+		return "", fmt.Errorf("could not get image from %s: %v", spec.layout, err)
 	}
 	stampedName := stamper.Stamp(spec.name)
 
@@ -297,10 +259,10 @@ func (r *Resolver) publishSingle(spec imageSpec, stamper *compat.Stamper) (strin
 }
 
 // publish publishes the image with the given spec. It returns:
-// 1. A map from the unstamped & tagged image name to the stamped image name
-//    referenced by its sha256 digest.
-// 2. A set of unstamped & tagged image names that were pushed to the registry.
-func (r *Resolver) publish(spec []imageSpec, stamper *compat.Stamper) (map[string]string, map[string]bool, error) {
+//  1. A map from the unstamped & tagged image name to the stamped image name
+//     referenced by its sha256 digest.
+//  2. A set of unstamped & tagged image names that were pushed to the registry.
+func (r *Resolver) publish(spec []imageSpec, stamper *Stamper) (map[string]string, map[string]bool, error) {
 	overrides := make(map[string]string)
 	unseen := make(map[string]bool)
 	for _, s := range spec {
@@ -336,11 +298,12 @@ type yamlResolver struct {
 // a tagged image name with an image name referenced by its sha256 digest. If
 // the given string doesn't represent a tagged image, it is returned as is.
 // The given resolver is also modified:
-// 1. If the given string was a tagged image, the resolved image lookup in the
-//    given resolver is updated to include a mapping from the given string to
-//    the resolved image name.
-// 2. If the given string was a tagged image, the set of unseen images in the
-//    given resolver is updated to exclude the given string.
+//  1. If the given string was a tagged image, the resolved image lookup in the
+//     given resolver is updated to include a mapping from the given string to
+//     the resolved image name.
+//  2. If the given string was a tagged image, the set of unseen images in the
+//     given resolver is updated to exclude the given string.
+//
 // The resolver is best-effort, i.e., if any errors are encountered, the given
 // string is returned as is.
 func resolveString(r *yamlResolver, s string) (string, error) {

@@ -13,10 +13,11 @@
 # limitations under the License.
 """An implementation of k8s_object for interacting with an object of kind."""
 
-load(
-    "@io_bazel_rules_docker//skylib:path.bzl",
-    _get_runfile_path = "runfile",
-)
+def _get_runfile_path(ctx, f):
+    if ctx.workspace_name:
+        return ctx.workspace_name + "/" + f.short_path
+    else:
+        return f.short_path
 
 def _runfiles(ctx, f):
     return "PYTHON_RUNFILES=${RUNFILES} ${RUNFILES}/%s $@" % _get_runfile_path(ctx, f)
